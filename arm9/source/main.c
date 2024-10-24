@@ -74,6 +74,10 @@ void main(int argc, char **argv, u32 magicWord)
     //Shell closed, no error booting NTRCARD, NAND paritions not even considered
     isNtrBoot = bootMediaStatus[3] == 2 && !bootMediaStatus[1] && !bootPartitionsStatus[0] && !bootPartitionsStatus[1];
 
+    char *spoofedPath = "sdmc:/luma/payloads/boot.firm";
+
+    argv[0] = spoofedPath;
+
     if((magicWord & 0xFFFF) == 0xBEEF && argc >= 1) //Normal (B9S) boot
     {
         bootType = isNtrBoot ? B9SNTR : B9S;

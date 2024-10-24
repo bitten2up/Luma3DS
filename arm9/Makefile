@@ -14,7 +14,7 @@ export VERSION_MAJOR	:=	$(shell git describe --tags --match v[0-9]* | cut -c2- |
 export VERSION_MINOR	:=	$(shell git describe --tags --match v[0-9]* | cut -c2- | cut -f1 -d- | cut -f2 -d.)
 export VERSION_BUILD	:=	$(shell git describe --tags --match v[0-9]* | cut -c2- | cut -f1 -d- | cut -f3 -d.)
 export COMMIT			:=	$(shell git rev-parse --short=8 HEAD)
-export IS_RELEASE		:=	0
+export IS_RELEASE		:=	1
 
 export BASE_VERSION_MAJOR	:=	13
 export BASE_VERSION_MINOR	:=	1
@@ -49,7 +49,7 @@ export HBLDR_DEFAULT_3DSX_TID ?= 000400000D921E00
 # DATA is a list of directories containing data files
 # INCLUDES is a list of directories containing header files
 #---------------------------------------------------------------------------------
-APP_TITLE	:=	Starlight3DS
+APP_TITLE	:=	Luma3DS
 TARGET		:=	$(notdir $(CURDIR))
 BUILD		:=	build
 SOURCES		:=	source source/fatfs source/fatfs/sdmmc
@@ -173,7 +173,7 @@ $(OFILES_SRC)	: $(HFILES_BIN)
 memory.o strings.o:	CFLAGS +=	-O3
 patches.o config.o:	CFLAGS +=	-DCONFIG_TITLE="\"$(APP_TITLE) $(REVISION) configuration\""\
 								-DVERSION_MAJOR="$(VERSION_MAJOR)" -DVERSION_MINOR="$(VERSION_MINOR)"\
-								-DVERSION_BUILD="$(VERSION_BUILD)" -DISRELEASE="$(IS_RELEASE)" -DCOMMIT_HASH="0x$(COMMIT)"\
+								-DVERSION_BUILD="$(VERSION_BUILD)" -DISRELEASE="$(IS_RELEASE)" -DCOMMIT_HASH="0x988ec17e"\
 								-DBASE_VERSION_MAJOR="$(BASE_VERSION_MAJOR)" -DBASE_VERSION_MINOR="$(BASE_VERSION_MINOR)"\
 								-DBASE_VERSION_BUILD="$(BASE_VERSION_BUILD)" 
 config.o ini.o:		CFLAGS +=	-DINI_HANDLER_LINENO=1 -DINI_STOP_ON_FIRST_ERROR=1
