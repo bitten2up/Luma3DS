@@ -40,24 +40,23 @@
 #include "memory.h"
 #include "fmt.h"
 #include "process_patches.h"
-#include "luminance.h"
 #include "luma_config.h"
 
 Menu rosalinaMenu = {
     "Rosalina menu",
     {
         { "Take screenshot", METHOD, .method = &RosalinaMenu_TakeScreenshot },
-        { "Change screen brightness", METHOD, .method = &RosalinaMenu_ChangeScreenBrightness },
+        { "System configuration...", MENU, .menu = &sysconfigMenu },
         { "Cheats...", METHOD, .method = &RosalinaMenu_Cheats },
         { "", METHOD, .method = PluginLoader__MenuCallback},
+        { "New 3DS menu: ", MENU, .menu = &N3DSMenu, .visibility = &menuCheckN3ds },
         { "Process list", METHOD, .method = &RosalinaMenu_ProcessList },
         { "Debugger options...", MENU, .menu = &debuggerMenu },
-        { "System configuration...", MENU, .menu = &sysconfigMenu },
         { "Screen filters...", MENU, .menu = &screenFiltersMenu },
-        { "New 3DS settings:", MENU, .menu = &N3DSMenu, .visibility = &menuCheckN3ds },
         { "Miscellaneous options...", MENU, .menu = &miscellaneousMenu },
         { "Save settings", METHOD, .method = &RosalinaMenu_SaveSettings },
-        { "Power options...", METHOD, .method = &RosalinaMenu_PowerOptions },
+        { "Power off / reboot", METHOD, .method = &RosalinaMenu_PowerOffOrReboot },
+        { "System info", METHOD, .method = &RosalinaMenu_ShowSystemInfo },
         { "Credits", METHOD, .method = &RosalinaMenu_ShowCredits },
         { "Debug info", METHOD, .method = &RosalinaMenu_ShowDebugInfo, .visibility = &rosalinaMenuShouldShowDebugInfo },
         {},
@@ -95,6 +94,73 @@ void RosalinaMenu_SaveSettings(void)
     while(!(waitInput() & KEY_B) && !menuShouldExit);
 }
 
+void RosalinaMenu_PowerOffOrReboot(void)
+{
+    Draw_Lock();
+    Draw_ClearFramebuffer();
+    Draw_FlushFramebuffer();
+    Draw_Unlock();
+
+    do
+    {
+        Draw_Lock();
+        Draw_DrawString(10, 10, COLOR_TITLE, "Power Off / Reboot");
+        Draw_DrawString(10, 30, COLOR_WHITE, "Press A to power off.\nPress Y to reboot.\nPress B to go back.");
+        Draw_FlushFramebuffer();
+        Draw_Unlock();
+
+        u32 pressed = waitInputWithTimeout(1000);
+
+        if(pressed & KEY_Y)
+        {
+            menuLeave();
+            APT_HardwareResetAsync();
+            return;
+        }
+        else if(pressed & KEY_A)
+        {
+            // Soft shutdown
+            menuLeave();
+            srvPublishToSubscriber(0x203, 0);
+            return;
+        }
+        else if(pressed & KEY_B)
+            return;
+    }
+    while(!menuShouldExit);
+}
+
+void RosalinaMenu_ShowSystemInfo(void)
+{
+    u32 kver = osGetKernelVersion();
+
+    do
+    {
+        Draw_Lock();
+        Draw_DrawString(10, 10, COLOR_TITLE, "Rosalina -- System info");
+
+        u32 posY = 30;
+
+        if (areScreenTypesInitialized)
+        {
+            posY = Draw_DrawFormattedString(10, posY, COLOR_WHITE, "Top screen type:    %s\n", topScreenType);
+            posY = Draw_DrawFormattedString(10, posY, COLOR_WHITE, "Bottom screen type: %s\n\n", bottomScreenType);
+        }
+
+        posY = Draw_DrawFormattedString(10, posY, COLOR_WHITE, "Kernel version:     %lu.%lu-%lu\n\n", GET_VERSION_MAJOR(kver), GET_VERSION_MINOR(kver), GET_VERSION_REVISION(kver));
+        if (mcuFwVersion != 0 && mcuInfoTableRead)
+        {
+            posY = Draw_DrawFormattedString(10, posY, COLOR_WHITE, "MCU FW version:     %lu.%lu\n", GET_VERSION_MAJOR(mcuFwVersion), GET_VERSION_MINOR(mcuFwVersion));
+            posY = Draw_DrawFormattedString(10, posY, COLOR_WHITE, "PMIC vendor:        %hhu\n", mcuInfoTable[1]);
+            posY = Draw_DrawFormattedString(10, posY, COLOR_WHITE, "Battery vendor:     %hhu\n\n", mcuInfoTable[2]);
+        }
+
+        Draw_FlushFramebuffer();
+        Draw_Unlock();
+    }
+    while(!(waitInput() & KEY_B) && !menuShouldExit);
+}
+
 void RosalinaMenu_ShowDebugInfo(void)
 {
     Draw_Lock();
@@ -110,7 +176,6 @@ void RosalinaMenu_ShowDebugInfo(void)
     u32 kextPa = (u32)((u64)kextAddrSize >> 32);
     u32 kextSize = (u32)kextAddrSize;
 
-    u32 kernelVer = osGetKernelVersion();
     FS_SdMmcSpeedInfo speedInfo;
 
     do
@@ -118,20 +183,10 @@ void RosalinaMenu_ShowDebugInfo(void)
         Draw_Lock();
         Draw_DrawString(10, 10, COLOR_TITLE, "Rosalina -- Debug info");
 
-        u32 posY = Draw_DrawString(10, 30, COLOR_WHITE, memoryMap);
-        posY = Draw_DrawFormattedString(10, posY, COLOR_WHITE, "Kernel ext PA: %08lx - %08lx\n\n", kextPa, kextPa + kextSize);
-        posY = Draw_DrawFormattedString(
-            10, posY, COLOR_WHITE, "Kernel version: %lu.%lu-%lu\n",
-            GET_VERSION_MAJOR(kernelVer), GET_VERSION_MINOR(kernelVer), GET_VERSION_REVISION(kernelVer)
-        );
-        if (mcuFwVersion != 0)
-        {
-            posY = Draw_DrawFormattedString(
-                10, posY, COLOR_WHITE, "MCU FW version: %lu.%lu\n",
-                GET_VERSION_MAJOR(mcuFwVersion), GET_VERSION_MINOR(mcuFwVersion)
-            );
-        }
+        u32 posY = 30;
 
+        posY = Draw_DrawString(10, posY, COLOR_WHITE, memoryMap);
+        posY = Draw_DrawFormattedString(10, posY, COLOR_WHITE, "Kernel ext PA: %08lx - %08lx\n\n", kextPa, kextPa + kextSize);
         if (R_SUCCEEDED(FSUSER_GetSdmcSpeedInfo(&speedInfo)))
         {
             u32 clkDiv = 1 << (1 + (speedInfo.sdClkCtrl & 0xFF));
@@ -188,8 +243,9 @@ void RosalinaMenu_ShowCredits(void)
                 "  other people\n\n"
                 "People who made this fork possible:\n"
                 "  DullPointer, Sono, Nutez, cooolgamer,\n"
-                "  DeathChaos25, truedread, Gruetzig,\n"
-                "  Tekito-256, exalented, Alexyo21"
+                "  Pixel-Pop, DeathChaos25, truedread,\n"
+                "  Gruetzig, Tekito-256, exalented,\n"
+                "  Alexyo21"
             ));
 
         Draw_FlushFramebuffer();
@@ -197,220 +253,6 @@ void RosalinaMenu_ShowCredits(void)
     }
     while(!(waitInput() & KEY_B) && !menuShouldExit);
 }
-
-void RosalinaMenu_ChangeScreenBrightness(void)
-{
-    Draw_Lock();
-    Draw_ClearFramebuffer();
-    Draw_FlushFramebuffer();
-    Draw_Unlock();
-
-    // gsp:LCD GetLuminance is stubbed on O3DS so we have to implement it ourselves... damn it.
-    u32 luminanceTop = getCurrentLuminance(true);
-    u32 luminanceBot = getCurrentLuminance(false);
-    u32 minLum = getMinLuminancePreset();
-    u32 maxLum = getMaxLuminancePreset();
-    u32 trueMax = 172; // https://www.3dbrew.org/wiki/GSPLCD:SetBrightnessRaw
-    u32 trueMin = 6;
-    // hacky but N3DS coeffs for top screen don't seem to work and O3DS coeffs when using N3DS return 173 max brightness
-    luminanceTop = luminanceTop == 173 ? trueMax : luminanceTop;
-
-    do
-    {
-        Draw_Lock();
-        Draw_DrawString(10, 10, COLOR_TITLE, "Screen brightness");
-        u32 posY = 30;
-        posY = Draw_DrawFormattedString(
-            10,
-            posY,
-            COLOR_WHITE,
-            "Preset: %lu to %lu, Extended: %lu to %lu.\n\n",
-            minLum,
-            maxLum,
-            trueMin,
-            trueMax
-        );
-        posY = Draw_DrawFormattedString(
-            10,
-            posY,
-            luminanceTop > trueMax ? COLOR_RED : COLOR_WHITE,
-            "Top screen luminance: %lu\n",
-            luminanceTop
-        );
-        posY = Draw_DrawFormattedString(
-            10,
-            posY,
-            luminanceBot > trueMax ? COLOR_RED : COLOR_WHITE,
-            "Bottom screen luminance: %lu \n\n",
-            luminanceBot
-        );
-        posY = Draw_DrawString(10, posY, COLOR_GREEN, "Controls:\n");
-        posY = Draw_DrawString(10, posY, COLOR_WHITE, "Up/Down for +/-1, Right/Left for +/-10.\n");
-        posY = Draw_DrawString(10, posY, COLOR_WHITE, "Hold X/Y for Top/Bottom screen only. \n");
-        posY = Draw_DrawFormattedString(10, posY, COLOR_WHITE, "Hold L/R for extended limits (<%lu may glitch). \n", minLum);
-
-        posY = Draw_DrawString(10, posY, COLOR_TITLE, "Press A to begin, B to exit.\n\n");
-
-        posY = Draw_DrawString(10, posY, COLOR_RED, "WARNING: \n");
-        posY = Draw_DrawString(10, posY, COLOR_WHITE, "  * values can glitch >172, do not use these!\n");
-        posY = Draw_DrawString(10, posY, COLOR_WHITE, "  * all changes revert on shell reopening.\n");
-        posY = Draw_DrawString(10, posY, COLOR_WHITE, "  * bottom framebuffer will be visible until exit.\n");
-        Draw_FlushFramebuffer();
-        Draw_Unlock();
-
-        u32 pressed = waitInputWithTimeout(1000);
-
-        if (pressed & KEY_A)
-            break;
-
-        if (pressed & KEY_B)
-            return;
-    }
-    while (!menuShouldExit);
-
-    Draw_Lock();
-
-    Draw_RestoreFramebuffer();
-    Draw_FreeFramebufferCache();
-
-    svcKernelSetState(0x10000, 2); // unblock gsp
-    gspLcdInit(); // assume it doesn't fail. If it does, brightness won't change, anyway.
-
-    s32 lumTop = (s32)luminanceTop;
-    s32 lumBot = (s32)luminanceBot;
-
-    do
-    {
-        u32 kHeld = 0;
-        kHeld = HID_PAD;
-        u32 pressed = waitInputWithTimeout(1000);
-        if (pressed & DIRECTIONAL_KEYS)
-        {
-            if(kHeld & KEY_X)
-            {
-                if (pressed & KEY_UP)
-                    lumTop += 1;
-                else if (pressed & KEY_DOWN)
-                    lumTop -= 1;
-                else if (pressed & KEY_RIGHT)
-                    lumTop += 10;
-                else if (pressed & KEY_LEFT)
-                    lumTop -= 10;
-            }
-            else if(kHeld & KEY_Y)
-            {
-                if (pressed & KEY_UP)
-                    lumBot += 1;
-                else if (pressed & KEY_DOWN)
-                    lumBot -= 1;
-                else if (pressed & KEY_RIGHT)
-                    lumBot += 10;
-                else if (pressed & KEY_LEFT)
-                    lumBot -= 10;
-            }
-            else 
-            {
-                if (pressed & KEY_UP)
-                {
-                    lumTop += 1;
-                    lumBot += 1;
-                }
-                else if (pressed & KEY_DOWN)
-                {
-                    lumTop -= 1;
-                    lumBot -= 1;
-                }
-                else if (pressed & KEY_RIGHT)
-                {
-                    lumTop += 10;
-                    lumBot += 10;
-                }
-                else if (pressed & KEY_LEFT)
-                {
-                    lumTop -= 10;
-                    lumBot -= 10;
-                }
-            }
-
-            if (kHeld & (KEY_L | KEY_R))
-            {
-                lumTop = lumTop > (s32)trueMax ? (s32)trueMax : lumTop;
-                lumBot = lumBot > (s32)trueMax ? (s32)trueMax : lumBot;
-                lumTop = lumTop < (s32)trueMin ? (s32)trueMin : lumTop;
-                lumBot = lumBot < (s32)trueMin ? (s32)trueMin : lumBot;
-            }
-            else
-            {
-                lumTop = lumTop > (s32)maxLum ? (s32)maxLum : lumTop;
-                lumBot = lumBot > (s32)maxLum ? (s32)maxLum : lumBot;
-                lumTop = lumTop < (s32)minLum ? (s32)minLum : lumTop;
-                lumBot = lumBot < (s32)minLum ? (s32)minLum : lumBot;
-            }
-
-            if (lumTop >= (s32)minLum && lumBot >= (s32)minLum) {
-                GSPLCD_SetBrightnessRaw(BIT(GSP_SCREEN_TOP), lumTop);
-                GSPLCD_SetBrightnessRaw(BIT(GSP_SCREEN_BOTTOM), lumBot);
-            }
-            else {
-                setBrightnessAlt(lumTop, lumBot);
-            }
-        }
-        
-        if (pressed & KEY_B)
-            break;
-    }
-    while (!menuShouldExit);
-
-    gspLcdExit();
-    svcKernelSetState(0x10000, 2); // block gsp again
-
-    if (R_FAILED(Draw_AllocateFramebufferCache(FB_BOTTOM_SIZE)))
-    {
-        // Shouldn't happen
-        __builtin_trap();
-    }
-    else
-        Draw_SetupFramebuffer();
-
-    Draw_Unlock();
-}
-
-void RosalinaMenu_PowerOptions(void) 
-{
-    Draw_Lock();
-    Draw_ClearFramebuffer();
-    Draw_FlushFramebuffer();
-    Draw_Unlock();
-
-    do
-    {
-        Draw_Lock();
-        Draw_DrawString(10, 10, COLOR_TITLE, "Power options");
-        Draw_DrawString(10, 30, COLOR_WHITE, "Press X to power off, press Y to reboot,");
-        Draw_DrawString(10, 40, COLOR_WHITE, "Press B to go back.");
-        Draw_FlushFramebuffer();
-        Draw_Unlock();
-
-        u32 pressed = waitInputWithTimeout(1000);
-
-        if(pressed & KEY_X) // Soft shutdown.
-        {
-            menuLeave();
-            srvPublishToSubscriber(0x203, 0);
-            return;
-        }
-        else if(pressed & KEY_Y)
-        {
-            menuLeave();
-            APT_HardwareResetAsync();
-            return;
-        }
-        else if(pressed & KEY_B)
-            return;
-    }
-    while(!menuShouldExit);
-}
-
 
 #define TRY(expr) if(R_FAILED(res = (expr))) goto end;
 
@@ -465,7 +307,7 @@ static Result RosalinaMenu_WriteScreenshot(IFile *file, u32 width, bool top, boo
 
 void RosalinaMenu_TakeScreenshot(void)
 {
-    IFile file;
+    IFile file = {0};
     Result res = 0;
 
     char filename[64];
@@ -503,6 +345,11 @@ void RosalinaMenu_TakeScreenshot(void)
             res = 0;
         FSUSER_CloseArchive(archive);
     }
+    else
+    {
+        archive = 0;
+        goto end;
+    }
 
     dateTimeToString(dateTimeStr, osGetTime(), true);
 
@@ -526,6 +373,9 @@ void RosalinaMenu_TakeScreenshot(void)
 
 end:
     IFile_Close(&file);
+
+    if (archive != 0)
+        FSUSER_CloseArchive(archive);
 
     if (R_FAILED(Draw_AllocateFramebufferCache(FB_BOTTOM_SIZE)))
         __builtin_trap(); // We're f***ed if this happens
@@ -554,6 +404,91 @@ end:
         Draw_Unlock();
     }
     while(!(waitInput() & KEY_B) && !menuShouldExit);
+}
+
+static Result menuWriteSelfScreenshot(IFile *file)
+{
+    u64 total;
+    Result res = 0;
+
+    u32 width = 320;
+    u32 lineSize = 3 * width;
+
+    u32 scaleFactorY = 1;
+    u32 numLinesScaled = 240 * scaleFactorY;
+
+    u32 addr = 0x0D800000; // keep this in check
+    u32 tmp;
+
+    u32 size = ((54 + lineSize * numLinesScaled * scaleFactorY) + 0xFFF) >> 12 << 12; // round-up
+    u8 *buffer = NULL;
+
+    TRY(svcControlMemoryEx(&tmp, addr, 0, size, MEMOP_ALLOC | MEMOP_REGION_SYSTEM, MEMPERM_READWRITE, true));
+    buffer = (u8 *)addr;
+
+    Draw_CreateBitmapHeader(buffer, width, numLinesScaled);
+
+    Draw_ConvertFrameBufferLines(buffer + 54, width, 0, numLinesScaled, scaleFactorY, false, false);
+    TRY(IFile_Write(file, &total, buffer, 54 + lineSize * numLinesScaled * scaleFactorY, 0)); // don't forget to write the header
+
+end:
+    if (buffer)
+        svcControlMemoryEx(&tmp, addr, 0, size, MEMOP_FREE, MEMPERM_DONTCARE, false);
+
+    return res;
+}
+
+void menuTakeSelfScreenshot(void)
+{
+    // Optimized for N3DS. May fail due to OOM.
+
+    IFile file = {0};
+    Result res = 0;
+
+    char filename[100];
+    char dateTimeStr[64];
+
+    FS_Archive archive;
+    FS_ArchiveID archiveId;
+    s64 out;
+    bool isSdMode;
+
+    timeSpentConvertingScreenshot = 0;
+    timeSpentWritingScreenshot = 0;
+
+    if(R_FAILED(svcGetSystemInfo(&out, 0x10000, 0x203))) svcBreak(USERBREAK_ASSERT);
+    isSdMode = (bool)out;
+
+    archiveId = isSdMode ? ARCHIVE_SDMC : ARCHIVE_NAND_RW;
+    Draw_Lock();
+    svcFlushEntireDataCache();
+
+    res = FSUSER_OpenArchive(&archive, archiveId, fsMakePath(PATH_EMPTY, ""));
+    if(R_SUCCEEDED(res))
+    {
+        res = FSUSER_CreateDirectory(archive, fsMakePath(PATH_ASCII, "/luma/screenshots"), 0);
+        if((u32)res == 0xC82044BE) // directory already exists
+            res = 0;
+        FSUSER_CloseArchive(archive);
+    }
+    else
+    {
+        archive = 0;
+        goto end;
+    }
+
+    dateTimeToString(dateTimeStr, osGetTime(), true);
+
+    sprintf(filename, "/luma/screenshots/rosalina_menu_%s.bmp", dateTimeStr);
+
+    TRY(IFile_Open(&file, archiveId, fsMakePath(PATH_EMPTY, ""), fsMakePath(PATH_ASCII, filename), FS_OPEN_CREATE | FS_OPEN_WRITE));
+    TRY(menuWriteSelfScreenshot(&file));
+
+end:
+    IFile_Close(&file);
+
+    if (archive != 0)
+        FSUSER_CloseArchive(archive);
+}
 
 #undef TRY
-}
